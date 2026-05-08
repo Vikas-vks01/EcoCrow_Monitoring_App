@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en" class="h-full">
+ <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESP32 Movement Tracker</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.263.0/dist/umd/lucide.min.js"></script>
+  <script src="/_sdk/element_sdk.js"></script>
+  <script src="/_sdk/data_sdk.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&amp;family=Outfit:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Outfit', sans-serif; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .pulse-dot { animation: pulse 2s infinite; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(1.5); }
+    }
+    .fade-in { animation: fadeIn 0.3s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    #map { border-radius: 12px; }
+    .leaflet-tile-pane { filter: saturate(0.8) brightness(0.95); }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    .tab-active { border-bottom: 2px solid #10b981; color: #10b981; }
+  </style>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            surface: '#0f172a',
+            panel: '#1e293b',
+            accent: '#10b981',
+            accentHover: '#059669',
+            textMain: '#e2e8f0'
+          }
+        }
+      }
+    }
+  </script>
+  <style>body { box-sizing: border-box; }</style>
+ </head>
+ <body class="h-full bg-surface text-textMain overflow-auto">
+  <div id="app" class="h-full w-full flex flex-col"><!-- Header -->
+   <header class="flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
+    <div class="flex items-center gap-3">
+     <div class="w-10 h-10 rounded-lg bg-accent/20 flex items-center justify-center"><i data-lucide="radio" class="w-5 h-5 text-accent"></i>
+     </div>
+     <div>
+      <h1 id="app-title" class="text-lg font-semibold">ESP32 Movement Tracker</h1>
+      <p id="app-subtitle" class="text-xs text-slate-400">Real-time IoT Dashboard</p>
+     </div>
+    </div>
+    <div class="flex items-center gap-3">
+     <div id="connection-status" class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30"><span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span> <span class="text-xs text-emerald-400 mono">LIVE</span>
+     </div><button id="sim-btn" class="px-3 py-1.5 rounded-lg bg-panel border border-slate-600 text-xs hover:border-accent transition-colors"> <i data-lucide="play" class="w-3 h-3 inline-block mr-1"></i>Simulate </button> <select id="device-select" class="bg-panel border border-slate-600 rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none"> <option value="esp32-001">ESP32-001</option> <option value="esp32-002">ESP32-002</option> <option value="esp32-003">ESP32-003</option> </select>
+    </div>
+   </header><!-- Main Content -->
+   <div class="flex-1 flex flex-col lg:flex-row gap-4 p-4 overflow-auto"><!-- Left: Map + Charts -->
+    <div class="flex-1 flex flex-col gap-4 min-w-0"><!-- Stats Row -->
+     <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="bg-panel rounded-xl p-4 border border-slate-700/50 fade-in">
+       <p class="text-xs text-slate-400 mb-1">Data Points</p>
+       <p id="stat-points" class="text-2xl font-bold mono text-accent">0</p>
+      </div>
+      <div class="bg-panel rounded-xl p-4 border border-slate-700/50 fade-in">
+       <p class="text-xs text-slate-400 mb-1">Speed (km/h)</p>
+       <p id="stat-speed" class="text-2xl font-bold mono">0.0</p>
+      </div>
+      <div class="bg-panel rounded-xl p-4 border border-slate-700/50 fade-in">
+       <p class="text-xs text-slate-400 mb-1">Acceleration</p>
+       <p id="stat-accel" class="text-2xl font-bold mono">0.0</p>
+      </div>
+      <div class="bg-panel rounded-xl p-4 border border-slate-700/50 fade-in">
+       <p class="text-xs text-slate-400 mb-1">Last Update</p>
+       <p id="stat-time" class="text-lg font-bold mono">--:--</p>
+      </div>
+     </div><!-- Map -->
+     <div class="flex-1 min-h-[300px] bg-panel rounded-xl border border-slate-700/50 overflow-hidden relative">
+      <div id="map" class="w-full h-full" style="min-height: 300px;"></div>
+     </div><!-- Charts -->
+     <div class="bg-panel rounded-xl border border-slate-700/50 p-4">
+      <div class="flex gap-4 mb-3 border-b border-slate-700/50"><button class="chart-tab tab-active pb-2 text-xs font-medium" data-chart="speed">Speed</button> <button class="chart-tab pb-2 text-xs font-medium text-slate-400 hover:text-textMain" data-chart="accel">Acceleration</button>
+      </div>
+      <div class="h-[160px]">
+       <canvas id="chart-canvas"></canvas>
+      </div>
+     </div>
+    </div><!-- Right: Data Log -->
+    <div class="w-full lg:w-80 bg-panel rounded-xl border border-slate-700/50 flex flex-col overflow-hidden">
+     <div class="px-4 py-3 border-b border-slate-700/50 flex items-center justify-between">
+      <h2 class="text-sm font-semibold">Data Log</h2><span id="log-count" class="text-xs mono text-slate-400">0 entries</span>
+     </div>
+     <div id="data-log" class="flex-1 overflow-auto p-3 space-y-2 max-h-[500px]">
+      <div class="text-center text-slate-500 text-xs py-8">
+       No data yet. Click "Simulate" to start.
+      </div>
+     </div><!-- ESP32 Code Reference -->
+     <div class="border-t border-slate-700/50 p-3">
+      <details class="text-xs"><summary class="cursor-pointer text-slate-400 hover:text-accent transition-colors font-medium">ESP32 Code Reference</summary>
+       <pre class="mt-2 bg-surface rounded-lg p-3 overflow-auto text-[10px] mono text-slate-300 max-h-[200px]">#include &lt;WiFi.h&gt;
+#include &lt;HTTPClient.h&gt;
+#include &lt;ArduinoJson.h&gt;
+
+const char* ssid = "YOUR_WIFI";
+const char* pass = "YOUR_PASS";
+const char* server = "https://your-api.com/api/data";
+
+void sendData(float lat, float lng, float spd) {
+  HTTPClient http;
+  http.begin(server);
+  http.addHeader("Content-Type", "application/json");
+
+  StaticJsonDocument&lt;256&gt; doc;
+  doc["device_id"] = "esp32-001";
+  doc["latitude"] = lat;
+  doc["longitude"] = lng;
+  doc["speed"] = spd;
+  doc["timestamp"] = millis();
+
+  String json;
+  serializeJson(doc, json);
+  int code = http.POST(json);
+  http.end();
+}</pre>
+      </details>
+     </div>
+    </div>
+   </div>
+  </div>
+  <script>
+    // State
+    let allData = [];
+    let currentDevice = 'esp32-001';
+    let simInterval = null;
+    let map, polyline, marker;
+    let chart, chartType = 'speed';
+    let currentRecordCount = 0;
+
+    // Default config
+    const defaultConfig = {
+      app_title: 'ESP32 Movement Tracker',
+      subtitle: 'Real-time IoT Dashboard',
+      background_color: '#0f172a',
+      panel_color: '#1e293b',
+      text_color: '#e2e8f0',
+      accent_color: '#10b981',
+      secondary_color: '#334155'
+    };
+
+    // Element SDK init
+    window.elementSdk.init({
+      defaultConfig,
+      onConfigChange: async (config) => {
+        document.getElementById('app-title').textContent = config.app_title || defaultConfig.app_title;
+        document.getElementById('app-subtitle').textContent = config.subtitle || defaultConfig.subtitle;
+        document.body.style.backgroundColor = config.background_color || defaultConfig.background_color;
+        document.body.style.color = config.text_color || defaultConfig.text_color;
+
+        document.querySelectorAll('.bg-panel').forEach(el => {
+          el.style.backgroundColor = config.panel_color || defaultConfig.panel_color;
+        });
+
+        const font = config.font_family ? `${config.font_family}, Outfit, sans-serif` : "'Outfit', sans-serif";
+        document.body.style.fontFamily = font;
+        document.getElementById('app-title').style.fontFamily = font;
+
+        if (config.font_size) {
+          const base = config.font_size;
+          document.getElementById('app-title').style.fontSize = `${base * 1.125}px`;
+          document.getElementById('app-subtitle').style.fontSize = `${base * 0.75}px`;
+        }
+      },
+      mapToCapabilities: (config) => ({
+        recolorables: [
+          { get: () => config.background_color || defaultConfig.background_color, set: (v) => { config.background_color = v; window.elementSdk.setConfig({ background_color: v }); } },
+          { get: () => config.panel_color || defaultConfig.panel_color, set: (v) => { config.panel_color = v; window.elementSdk.setConfig({ panel_color: v }); } },
+          { get: () => config.text_color || defaultConfig.text_color, set: (v) => { config.text_color = v; window.elementSdk.setConfig({ text_color: v }); } },
+          { get: () => config.accent_color || defaultConfig.accent_color, set: (v) => { config.accent_color = v; window.elementSdk.setConfig({ accent_color: v }); } },
+          { get: () => config.secondary_color || defaultConfig.secondary_color, set: (v) => { config.secondary_color = v; window.elementSdk.setConfig({ secondary_color: v }); } }
+        ],
+        borderables: [],
+        fontEditable: {
+          get: () => config.font_family || defaultConfig.font_family || 'Outfit',
+          set: (v) => { config.font_family = v; window.elementSdk.setConfig({ font_family: v }); }
+        },
+        fontSizeable: {
+          get: () => config.font_size || 16,
+          set: (v) => { config.font_size = v; window.elementSdk.setConfig({ font_size: v }); }
+        }
+      }),
+      mapToEditPanelValues: (config) => new Map([
+        ['app_title', config.app_title || defaultConfig.app_title],
+        ['subtitle', config.subtitle || defaultConfig.subtitle]
+      ])
+    });
+
+    // Data SDK
+    const dataHandler = {
+      onDataChanged(data) {
+        allData = data;
+        currentRecordCount = data.length;
+        renderFromData();
+      }
+    };
+
+    async function initDataSdk() {
+      const result = await window.dataSdk.init(dataHandler);
+      if (!result.isOk) console.error('Data SDK init failed');
+    }
+    initDataSdk();
+
+    // Map init
+    function initMap() {
+      map = L.map('map').setView([37.7749, -122.4194], 13);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap &copy; CARTO'
+      }).addTo(map);
+      polyline = L.polyline([], { color: '#10b981', weight: 3, opacity: 0.8 }).addTo(map);
+      marker = L.circleMarker([37.7749, -122.4194], { radius: 8, color: '#10b981', fillColor: '#10b981', fillOpacity: 0.8 }).addTo(map);
+    }
+
+    // Chart init
+    function initChart() {
+      const ctx = document.getElementById('chart-canvas').getContext('2d');
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: { labels: [], datasets: [{ label: 'Speed (km/h)', data: [], borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)', tension: 0.4, fill: true, pointRadius: 2 }] },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { color: 'rgba(51,65,85,0.3)' }, ticks: { color: '#64748b', font: { size: 9 } } },
+            y: { grid: { color: 'rgba(51,65,85,0.3)' }, ticks: { color: '#64748b', font: { size: 9 } } }
+          }
+        }
+      });
+    }
+
+    function renderFromData() {
+      const deviceData = allData.filter(d => d.device_id === currentDevice).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+      const count = deviceData.length;
+
+      document.getElementById('stat-points').textContent = count;
+      document.getElementById('log-count').textContent = `${count} entries`;
+
+      if (count > 0) {
+        const last = deviceData[count - 1];
+        document.getElementById('stat-speed').textContent = (last.speed || 0).toFixed(1);
+        document.getElementById('stat-accel').textContent = (last.acceleration || 0).toFixed(1);
+        const t = new Date(last.timestamp);
+        document.getElementById('stat-time').textContent = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+        // Update map
+        const coords = deviceData.map(d => [d.latitude, d.longitude]);
+        polyline.setLatLngs(coords);
+        marker.setLatLng([last.latitude, last.longitude]);
+        map.setView([last.latitude, last.longitude], map.getZoom());
+
+        // Update chart
+        const labels = deviceData.slice(-30).map(d => new Date(d.timestamp).toLocaleTimeString([], { minute: '2-digit', second: '2-digit' }));
+        const values = deviceData.slice(-30).map(d => chartType === 'speed' ? d.speed : d.acceleration);
+        chart.data.labels = labels;
+        chart.data.datasets[0].data = values;
+        chart.data.datasets[0].label = chartType === 'speed' ? 'Speed (km/h)' : 'Acceleration (m/s²)';
+        chart.update('none');
+      }
+
+      // Log
+      const logEl = document.getElementById('data-log');
+      const recentData = deviceData.slice(-50).reverse();
+      if (recentData.length === 0) {
+        logEl.innerHTML = '<div class="text-center text-slate-500 text-xs py-8">No data yet. Click "Simulate" to start.</div>';
+        return;
+      }
+
+      const existingIds = new Map([...logEl.children].map(el => [el.dataset.id, el]));
+      const fragment = document.createDocumentFragment();
+
+      recentData.forEach(d => {
+        const id = d.__backendId;
+        let el = existingIds.get(id);
+        if (!el) {
+          el = document.createElement('div');
+          el.dataset.id = id;
+          el.className = 'bg-surface/50 rounded-lg p-2.5 text-[11px] mono border border-slate-700/30 fade-in';
+        }
+        el.innerHTML = `<div class="flex justify-between mb-1"><span class="text-accent">${d.device_id}</span><span class="text-slate-500">${new Date(d.timestamp).toLocaleTimeString()}</span></div><div class="text-slate-300">📍 ${d.latitude.toFixed(5)}, ${d.longitude.toFixed(5)}</div><div class="text-slate-400 mt-0.5">⚡ ${d.speed.toFixed(1)} km/h | 🔄 ${d.acceleration.toFixed(2)} m/s²</div>`;
+        fragment.appendChild(el);
+      });
+
+      logEl.innerHTML = '';
+      logEl.appendChild(fragment);
+    }
+
+    // Simulation
+    let simLat = 37.7749, simLng = -122.4194;
+
+    function startSimulation() {
+      if (simInterval) { stopSimulation(); return; }
+      const btn = document.getElementById('sim-btn');
+      btn.innerHTML = '<i data-lucide="square" class="w-3 h-3 inline-block mr-1"></i>Stop';
+      lucide.createIcons();
+
+      simInterval = setInterval(async () => {
+        if (currentRecordCount >= 999) {
+          stopSimulation();
+          return;
+        }
+        simLat += (Math.random() - 0.5) * 0.002;
+        simLng += (Math.random() - 0.5) * 0.002;
+        const speed = 20 + Math.random() * 60;
+        const accel = (Math.random() - 0.3) * 5;
+
+        const result = await window.dataSdk.create({
+          device_id: currentDevice,
+          latitude: simLat,
+          longitude: simLng,
+          speed: Math.round(speed * 10) / 10,
+          acceleration: Math.round(accel * 100) / 100,
+          timestamp: new Date().toISOString()
+        });
+
+        if (!result.isOk) console.error('Failed to save data point');
+      }, 1500);
+    }
+
+    function stopSimulation() {
+      clearInterval(simInterval);
+      simInterval = null;
+      const btn = document.getElementById('sim-btn');
+      btn.innerHTML = '<i data-lucide="play" class="w-3 h-3 inline-block mr-1"></i>Simulate';
+      lucide.createIcons();
+    }
+
+    // Events
+    document.getElementById('sim-btn').addEventListener('click', startSimulation);
+    document.getElementById('device-select').addEventListener('change', (e) => {
+      currentDevice = e.target.value;
+      renderFromData();
+    });
+
+    document.querySelectorAll('.chart-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.chart-tab').forEach(t => { t.classList.remove('tab-active'); t.classList.add('text-slate-400'); });
+        tab.classList.add('tab-active');
+        tab.classList.remove('text-slate-400');
+        chartType = tab.dataset.chart;
+        renderFromData();
+      });
+    });
+
+    // Init
+    initMap();
+    initChart();
+    lucide.createIcons();
+
+    // Resize map on window resize
+    window.addEventListener('resize', () => { if (map) map.invalidateSize(); });
+    setTimeout(() => { if (map) map.invalidateSize(); }, 500);
+  </script>
+ <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9f8609a913630aea',t:'MTc3ODIxNzg2Mi4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
